@@ -74,10 +74,10 @@ func (p *Parser) Parse() Node {
 		Type:   lex.LeftBrace,
 		Value:  "{",
 		Line:   1,
-		Column: 0,
+		Column: 1,
 	}
 
-	return parseItems(prog, nodify(dropComments(p.items)))
+	return parseItems(prog, nodify(noComment(p.items)))
 }
 
 func parseItems(wrapItem lex.Item, items chan Node) Node {
@@ -357,7 +357,7 @@ func nodify(in chan lex.Item) chan Node {
 	return out
 }
 
-func dropComments(in chan lex.Item) chan lex.Item {
+func noComment(in chan lex.Item) chan lex.Item {
 	out := make(chan lex.Item)
 
 	go func() {
