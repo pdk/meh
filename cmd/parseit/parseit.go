@@ -11,12 +11,12 @@ func main() {
 
 	p := parser.NewFromReader("stdin", os.Stdin)
 
-	log.Printf("new parser: %v", p)
+	// log.Printf("new parser: %v", p)
 
 	program := p.Parse()
 
 	// t, _ := json.MarshalIndent(program, "", "    ")
-	// log.Printf("%s", t)
+	// fmt.Printf("%s", t)
 
 	log.Printf("program: %v", program)
 }

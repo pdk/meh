@@ -38,6 +38,11 @@ type Node struct {
 	Children []Node
 }
 
+// Type returns the lex.Type of the Node.
+func (n Node) Type() lex.Type {
+	return n.Item.Type
+}
+
 func (n Node) String() string {
 	s := strings.Builder{}
 
@@ -64,40 +69,54 @@ func (n Node) String() string {
 
 // Parse will parse the complete input, and return an AST.
 func (p *Parser) Parse() Node {
-	return parseItems(nodify(dropComments(p.items)))
+	prog := lex.Item{
+		Lexer:  p.lexer,
+		Type:   lex.LeftBrace,
+		Value:  "{",
+		Line:   1,
+		Column: 0,
+	}
+
+	return parseItems(prog, nodify(dropComments(p.items)))
 }
 
-func parseItems(items chan Node) Node {
+func parseItems(wrapItem lex.Item, items chan Node) Node {
 
 	stmts := []Node{}
 
 	for x := range pipeline(
-		slicify(bracify(items)),
+		slicify(bracify(parenthify(items))),
 		binaryOps(lex.Mult, lex.Div, lex.Modulo),
 		binaryOps(lex.Plus, lex.Minus),
 		binaryOps(lex.Less, lex.Greater, lex.LessOrEqual, lex.GreaterOrEqual, lex.Equal, lex.NotEqual),
 		binaryOps(lex.And, lex.Or),
+		binaryOps(lex.Comma),
+		collapse(lex.Comma),
 		binaryOps(lex.Assign, lex.PlusAssign, lex.MinusAssign, lex.MultAssign, lex.DivAssign, lex.ModuloAssign),
 		checkResolved,
 	) {
+
+		if len(x) > 1 {
+			n := x[0]
+			log.Printf("error parsing statement near %s:%d:%d : %v", n.Item.Name(), n.Item.Line, n.Item.Column, x)
+			continue
+		}
+		if len(x) == 0 {
+			log.Printf("parser received statment with 0 elements (very bad!)")
+			continue
+		}
+
 		stmts = append(stmts, x[0])
 	}
 
 	return Node{
-		Item: lex.Item{
-			Type:  lex.LeftBrace,
-			Value: "{",
-		},
+		Item:     wrapItem,
 		Resolved: true,
 		Children: stmts,
 	}
 }
 
 func checkResolved(stmt []Node) []Node {
-
-	if len(stmt) != 1 {
-		log.Printf("error parsing statement (%d): %v", len(stmt), stmt)
-	}
 
 	for _, node := range stmt {
 		if !node.Resolved {
@@ -106,29 +125,6 @@ func checkResolved(stmt []Node) []Node {
 				node.Item.Value)
 		}
 		checkResolved(node.Children)
-	}
-
-	return stmt
-}
-
-func parenify(stmt []Node) []Node {
-	left, right := 0, 0
-	for i := 0; i < len(stmt); i++ {
-		switch unresolvedType(stmt[i]) {
-		case lex.LeftParen:
-			left++
-		case lex.RightParen:
-			right++
-		}
-	}
-
-	if left == 0 && right == 0 {
-		return stmt
-	}
-
-	if left != right {
-		// return unresolved
-		return stmt
 	}
 
 	return stmt
@@ -149,6 +145,35 @@ func binaryOps(operators ...lex.Type) func(stmt []Node) []Node {
 				}
 				return f(gorp(stmt[:i], operation, stmt[i+3:]))
 			}
+		}
+
+		return stmt
+	}
+
+	return f
+}
+
+func collapse(operators ...lex.Type) func(stmt []Node) []Node {
+
+	var f func(stmt []Node) []Node
+	f = func(stmt []Node) []Node {
+
+		// [ * [ * ... ] ... ] => [ * ... ... ]
+		for i := 0; i < len(stmt); i++ {
+
+			op := stmt[i]
+			if len(op.Children) == 0 || !op.Type().Match(operators...) {
+				continue
+			}
+
+			childOp := op.Children[0]
+			if op.Type() != childOp.Type() {
+				continue
+			}
+
+			op.Children = append(childOp.Children, op.Children[1:]...)
+
+			return f(gorp(stmt[:i], op, stmt[i+1:]))
 		}
 
 		return stmt
@@ -178,9 +203,7 @@ func pipeline(in chan []Node, jobs ...func([]Node) []Node) chan []Node {
 	out := make(chan []Node)
 
 	go func() {
-		defer func() {
-			close(out)
-		}()
+		defer close(out)
 
 		for stmt := range in {
 			out <- f(stmt)
@@ -194,10 +217,7 @@ func slicify(in chan Node) chan []Node {
 	out := make(chan []Node)
 
 	go func() {
-		defer func() {
-			// log.Printf("closing slicify")
-			close(out)
-		}()
+		defer close(out)
 
 		slice := make([]Node, 0)
 		for n := range in {
@@ -234,44 +254,95 @@ func bracify(in chan Node) chan Node {
 				continue
 			}
 
-			depth := 1
-			p := make(chan Node)
+			sub := make(chan Node)
 
-			go func() {
-				defer close(p)
+			go func(openBrace Node) {
+				defer close(sub)
 
+				depth := 1
 				for n := range in {
-					switch n.Item.Type {
-					case lex.LeftBrace:
-						depth++
-					case lex.RightBrace:
-						depth--
+					depth = depth + adjustDepth(n, lex.LeftBrace, lex.RightBrace)
+
+					switch {
+					case depth == 0:
+						return
+					case n.Item.Type.Match(lex.EOF):
+						log.Printf("%s:%d:%d open brace without close %q",
+							openBrace.Item.Name(), openBrace.Item.Line, openBrace.Item.Column,
+							openBrace.Item.Value)
+						return
 					}
 
-					if depth == 0 || n.Item.Type.Match(lex.EOF) {
-						p <- Node{Item: lex.Item{Type: lex.EOF}}
-						break
-					}
-
-					p <- n
+					sub <- n
 				}
-			}()
+			}(n)
 
-			out <- parseItems(p)
+			out <- parseItems(n.Item, sub)
 		}
 	}()
 
 	return out
 }
 
+func parenthify(in chan Node) chan Node {
+
+	out := make(chan Node)
+
+	go func() {
+		defer close(out)
+
+		for n := range in {
+
+			if !n.Item.Type.Match(lex.LeftParen) {
+				out <- n
+				continue
+			}
+
+			sub := make(chan Node)
+
+			go func(openParen Node) {
+				defer close(sub)
+
+				depth := 1
+				for n := range in {
+					depth = depth + adjustDepth(n, lex.LeftParen, lex.RightParen)
+
+					switch {
+					case depth == 0:
+						return
+					case n.Item.Type.Match(lex.EOF):
+						log.Printf("%s:%d:%d open paren without close %q",
+							openParen.Item.Name(), openParen.Item.Line, openParen.Item.Column,
+							openParen.Item.Value)
+						return
+					}
+
+					sub <- n
+				}
+			}(n)
+
+			out <- parseItems(n.Item, sub)
+		}
+	}()
+
+	return out
+}
+
+func adjustDepth(n Node, open, close lex.Type) int {
+	if close.Match(n.Item.Type) {
+		return -1
+	}
+	if open.Match(n.Item.Type) {
+		return 1
+	}
+	return 0
+}
+
 func nodify(in chan lex.Item) chan Node {
 	out := make(chan Node)
 
 	go func() {
-		defer func() {
-			// log.Printf("closing nodify")
-			close(out)
-		}()
+		defer close(out)
 
 		for item := range in {
 			out <- Node{
@@ -290,18 +361,12 @@ func dropComments(in chan lex.Item) chan lex.Item {
 	out := make(chan lex.Item)
 
 	go func() {
-		defer func() {
-			// log.Printf("closing dropComments")
-			close(out)
-		}()
+		defer close(out)
 
 		for next := range in {
 			if next.Type == lex.HashComment || next.Type == lex.SlashComment {
-				// log.Printf("dropping comment: %s", next.Value)
 				continue
 			}
-
-			// log.Printf("passing %s %s", next.Type, next.Value)
 
 			out <- next
 		}
