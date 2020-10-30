@@ -91,6 +91,8 @@ const (
 	LessOrEqual
 	Or
 	And
+	// max number of Item Types
+	TypeCount
 )
 
 // String returns string name of a Type.

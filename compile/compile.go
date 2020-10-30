@@ -68,23 +68,35 @@ func Noop(c Context, args ...Value) Value {
 	return nil
 }
 
+// CompilerFunc is a function that converts a Node to an Expr.
+type CompilerFunc func(node parser.Node) (Expr, error)
+
+var (
+	// compilerForType maps node Type to CompilerFunc.
+	compilerForType [lex.TypeCount]CompilerFunc
+)
+
+func init() {
+	compilerForType = [lex.TypeCount]CompilerFunc{
+		lex.LeftBrace:         compileBlock,
+		lex.Ident:             compileIdent,
+		lex.Number:            compileNumber,
+		lex.Plus:              compilePlus,
+		lex.BacktickString:    compileString,
+		lex.DoubleQuoteString: compileString,
+		lex.SingleQuoteString: compileString,
+	}
+}
+
 // Compile converts a parsed Node into an Expr.
 func Compile(node parser.Node) (Expr, error) {
 
-	switch node.Type() {
-	case lex.LeftBrace:
-		return compileBlock(node)
-	case lex.Ident:
-		return compileIdent(node)
-	case lex.Number:
-		return compileNumber(node)
-	case lex.Plus:
-		return compilePlus(node)
-	case lex.BacktickString, lex.DoubleQuoteString, lex.SingleQuoteString:
-		return compileString(node)
+	c := compilerForType[node.Type()]
+	if c == nil {
+		return nil, fmt.Errorf("cannot compile %s", node)
 	}
 
-	return Noop, nil
+	return c(node)
 }
 
 func compilePlus(node parser.Node) (Expr, error) {
