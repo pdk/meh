@@ -263,15 +263,18 @@ func word(l *Lexer) stateFunc {
 }
 
 func number(l *Lexer) stateFunc {
+	gotPoint := false
+
 	for {
 		r, err := l.next()
-		if err != nil {
+		if err != nil || isLetter(r) {
 			l.emitError(fmt.Sprintf("failed to scan number at %d:%d: %v", l.line, l.col, err))
 			return nil
 		}
 
-		if '0' <= r && r <= '9' {
+		if ('0' <= r && r <= '9') || (r == '.' && !gotPoint) {
 			l.collect(r)
+			gotPoint = r == '.'
 			continue
 		}
 
@@ -470,6 +473,6 @@ func isDecimal(ch rune) bool {
 	return '0' <= ch && ch <= '9'
 }
 
-func isHex(ch rune) bool {
-	return '0' <= ch && ch <= '9' || 'a' <= lower(ch) && lower(ch) <= 'f'
-}
+// func isHex(ch rune) bool {
+// 	return '0' <= ch && ch <= '9' || 'a' <= lower(ch) && lower(ch) <= 'f'
+// }
