@@ -1,15 +1,51 @@
 package lex
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Item is produced by a lexer.
 type Item struct {
 	*Lexer
 	Type
 	Value  string
-	Error  string
 	Line   int
 	Column int
+	error  // perhaps there was a problem
+}
+
+// ItemError composes an Item with an error.
+type ItemError struct {
+	item *Item
+	err  error
+}
+
+// Unwrap allows unwrapping an ItemError.
+func (ierr ItemError) Unwrap() error {
+	return ierr.err
+}
+
+// Error provides the standand error interface for an ItemError.
+func (ierr ItemError) Error() string {
+	name := ""
+	if ierr.item.name != "stdin" {
+		name = ierr.item.name + ":"
+	}
+
+	value := ierr.item.Value
+	if len(value) > 8 {
+		value = value[:5] + "..."
+	}
+	return fmt.Sprintf("%s%d:%d (%q) %s",
+		name, ierr.item.Line, ierr.item.Column, value, ierr.err.Error())
+}
+
+func (i *Item) Error(err error) ItemError {
+	return ItemError{
+		item: i,
+		err:  err,
+	}
 }
 
 // func (i Item) String() string {

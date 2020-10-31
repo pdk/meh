@@ -32,9 +32,11 @@ func run(args []string, stdout io.Writer) error {
 
 	c := compile.Context{}
 
-	result := program(c)
-
-	fmt.Println(result)
-
+	result, err := program(c)
+	if err != nil {
+		fmt.Printf("%v", err)
+	} else {
+		fmt.Println(result)
+	}
 	return nil
 }

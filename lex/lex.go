@@ -2,6 +2,7 @@ package lex
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -20,8 +21,8 @@ type Lexer struct {
 	scanner      *bufio.Scanner
 	backupBuffer chan fetch
 	current      strings.Builder
-	line         int
-	col          int
+	curLine      int
+	curCol       int
 	items        chan Item
 	lastItem     Item
 }
@@ -50,8 +51,8 @@ func New(name string, input io.Reader) (*Lexer, chan Item) {
 		scanner:      s,
 		backupBuffer: make(chan fetch, 2),
 		items:        make(chan Item),
-		line:         1,
-		col:          1,
+		curLine:      1,
+		curCol:       1,
 	}
 
 	go l.run()
@@ -109,15 +110,15 @@ func (l *Lexer) advancePos(s string) {
 	var last rune
 	for _, r := range s {
 		if r == '\t' {
-			l.col++
-			l.col = l.col + (l.col % tabWidth)
+			l.curCol++
+			l.curCol = l.curCol + (l.curCol % tabWidth)
 		}
 
 		if r == '\n' || (r == '\r' && last != '\n') {
-			l.line++
-			l.col = 0
+			l.curLine++
+			l.curCol = 0
 		}
-		l.col++
+		l.curCol++
 
 		last = r
 	}
@@ -125,7 +126,7 @@ func (l *Lexer) advancePos(s string) {
 
 // emit sends an Item down the channel.
 func (l *Lexer) emit(t Type) {
-	line, col, s := l.line, l.col, l.current.String()
+	line, col, s := l.curLine, l.curCol, l.current.String()
 	l.advancePos(s)
 	l.current.Reset()
 
@@ -144,19 +145,22 @@ func (l *Lexer) emit(t Type) {
 	l.items <- i
 }
 
-func (l *Lexer) emitError(mesg string) {
-	line, col, s := l.line, l.col, l.current.String()
+func (l *Lexer) emitError(err error) {
+	line, col, s := l.curLine, l.curCol, l.current.String()
 	l.advancePos(s)
 	l.current.Reset()
 
-	l.items <- Item{
+	var i Item
+	i = Item{
 		Lexer:  l,
 		Type:   Error,
 		Value:  s,
-		Error:  mesg,
 		Line:   line,
 		Column: col,
+		error:  i.Error(err),
 	}
+
+	l.items <- i
 }
 
 func (l *Lexer) collect(r rune) {
@@ -170,7 +174,7 @@ func cleanSlate(l *Lexer) stateFunc {
 
 	r, err := l.next()
 	if err != nil {
-		l.emitError(fmt.Sprintf("failed to scan next rune at %d:%d: %v", l.line, l.col, err))
+		l.emitError(fmt.Errorf("failed to scan next rune: %v", err))
 		return nil
 	}
 
@@ -202,10 +206,10 @@ func cleanSlate(l *Lexer) stateFunc {
 	p := l.peek()
 
 	switch r {
-	case '-':
-		if '0' <= p && p <= '9' {
-			return number
-		}
+	// case '-':
+	// 	if '0' <= p && p <= '9' {
+	// 		return number
+	// 	}
 	case '/':
 		if p == '/' {
 			return slashComment
@@ -216,7 +220,7 @@ func cleanSlate(l *Lexer) stateFunc {
 	if op != Error {
 		r, err := l.next()
 		if err != nil {
-			l.emitError(fmt.Sprintf("failed to scan double rune operator at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan double rune operator: %v", err))
 			return nil
 		}
 
@@ -237,7 +241,7 @@ func cleanSlate(l *Lexer) stateFunc {
 		return word
 	}
 
-	l.emitError("unrecognized rune")
+	l.emitError(errors.New("unrecognized rune"))
 	return nil
 }
 
@@ -245,7 +249,7 @@ func word(l *Lexer) stateFunc {
 	for {
 		r, err := l.next()
 		if err != nil {
-			l.emitError(fmt.Sprintf("failed to scan word at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan word: %v", err))
 			return nil
 		}
 
@@ -268,7 +272,7 @@ func number(l *Lexer) stateFunc {
 	for {
 		r, err := l.next()
 		if err != nil || isLetter(r) {
-			l.emitError(fmt.Sprintf("failed to scan number at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan number: %v", err))
 			return nil
 		}
 
@@ -304,7 +308,7 @@ func whitespace(l *Lexer) stateFunc {
 	for {
 		n, err := l.next()
 		if err != nil {
-			l.emitError(fmt.Sprintf("failed to scan whitespace at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan whitespace: %v", err))
 			return nil
 		}
 
@@ -329,7 +333,7 @@ func hashComment(l *Lexer) stateFunc {
 	for {
 		n, err := l.next()
 		if err != nil {
-			l.emitError(fmt.Sprintf("failed to scan within comment at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan within comment: %v", err))
 			return nil
 		}
 
@@ -347,7 +351,7 @@ func slashComment(l *Lexer) stateFunc {
 	for {
 		n, err := l.next()
 		if err != nil {
-			l.emitError(fmt.Sprintf("failed to scan within comment at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan within comment: %v", err))
 			return nil
 		}
 
@@ -365,12 +369,12 @@ func doubleQuoteString(l *Lexer) stateFunc {
 	for {
 		n, err := l.next()
 		if err != nil {
-			l.emitError(fmt.Sprintf("failed to scan within string at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan within string: %v", err))
 			return nil
 		}
 
 		if n == '\n' || n == '\r' || n == eof {
-			l.emitError(fmt.Sprintf("unclosed double quote string at %d:%d", l.line, l.col))
+			l.emitError(errors.New("unclosed double quote string"))
 			return nil
 		}
 
@@ -379,7 +383,7 @@ func doubleQuoteString(l *Lexer) stateFunc {
 
 			n, err := l.next()
 			if err != nil {
-				l.emitError(fmt.Sprintf("failed to scan within string at %d:%d: %v", l.line, l.col, err))
+				l.emitError(fmt.Errorf("failed to scan within string: %v", err))
 				return nil
 			}
 
@@ -401,12 +405,12 @@ func singleQuoteString(l *Lexer) stateFunc {
 	for {
 		n, err := l.next()
 		if err != nil {
-			l.emitError(fmt.Sprintf("failed to scan within string at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan within string: %v", err))
 			return nil
 		}
 
 		if n == eof {
-			l.emitError(fmt.Sprintf("unclosed single quote string at %d:%d", l.line, l.col))
+			l.emitError(errors.New("unclosed single quote string"))
 		}
 
 		if n == '\\' {
@@ -414,7 +418,7 @@ func singleQuoteString(l *Lexer) stateFunc {
 
 			n, err := l.next()
 			if err != nil {
-				l.emitError(fmt.Sprintf("failed to scan within string at %d:%d: %v", l.line, l.col, err))
+				l.emitError(fmt.Errorf("failed to scan within string: %v", err))
 				return nil
 			}
 
@@ -436,12 +440,12 @@ func backtickString(l *Lexer) stateFunc {
 	for {
 		n, err := l.next()
 		if err != nil {
-			l.emitError(fmt.Sprintf("failed to scan within string at %d:%d: %v", l.line, l.col, err))
+			l.emitError(fmt.Errorf("failed to scan within string: %v", err))
 			return nil
 		}
 
 		if n == eof {
-			l.emitError(fmt.Sprintf("unclosed backtick string at %d:%d", l.line, l.col))
+			l.emitError(fmt.Errorf("unclosed backtick string"))
 			return nil
 		}
 

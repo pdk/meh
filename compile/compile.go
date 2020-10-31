@@ -61,11 +61,11 @@ func NewContinue() Value {
 }
 
 // Expr is a thing that can be evaluated.
-type Expr func(Context, ...Value) Value
+type Expr func(Context, ...Value) (Value, error)
 
 // Noop is a no-operation Expr.
-func Noop(c Context, args ...Value) Value {
-	return nil
+func Noop(c Context, args ...Value) (Value, error) {
+	return nil, nil
 }
 
 // CompilerFunc is a function that converts a Node to an Expr.
@@ -110,21 +110,27 @@ func compilePlus(node parser.Node) (Expr, error) {
 		return nil, err
 	}
 
-	return func(ctx Context, vals ...Value) Value {
-		lVal := left(ctx)
-		rVal := right(ctx)
+	return func(ctx Context, vals ...Value) (Value, error) {
+		lVal, err := left(ctx)
+		if err != nil {
+			return nil, err
+		}
+		rVal, err := right(ctx)
+		if err != nil {
+			return nil, err
+		}
 
 		if v1, v2, ok := gotInts(lVal, rVal); ok {
-			return v1 + v2
+			return v1 + v2, nil
 		}
 		if v1, v2, ok := gotFloats(lVal, rVal); ok {
-			return v1 + v2
+			return v1 + v2, nil
 		}
 		if v1, v2, ok := gotStrings(lVal, rVal); ok {
-			return v1 + v2
+			return v1 + v2, nil
 		}
 
-		return nil
+		return nil, node.Error(fmt.Errorf("cannot apply operator to argument types %T, %T", lVal, rVal))
 	}, nil
 }
 
@@ -192,35 +198,40 @@ func compileBlock(node parser.Node) (Expr, error) {
 		stmts = append(stmts, e)
 	}
 
-	return func(ctx Context, vals ...Value) Value {
+	return func(ctx Context, vals ...Value) (Value, error) {
 
 		var lastVal interface{}
+		var err error
+
 		for _, e := range stmts {
-			lastVal = e(ctx)
+			lastVal, err = e(ctx)
+			if err != nil {
+				return nil, err
+			}
 			if flowChange(lastVal) != None {
-				return lastVal
+				return lastVal, nil
 			}
 		}
 
-		return NewTuple(true, lastVal)
+		return NewTuple(true, lastVal), nil
 	}, nil
+}
+
+func valFunc(val Value) func(Context, ...Value) (Value, error) {
+	return func(Context, ...Value) (Value, error) {
+		return val, nil
+	}
 }
 
 func compileIdent(node parser.Node) (Expr, error) {
 
 	switch node.Item.Value {
 	case "true":
-		return func(Context, ...Value) Value {
-			return true
-		}, nil
+		return valFunc(true), nil
 	case "false":
-		return func(Context, ...Value) Value {
-			return false
-		}, nil
+		return valFunc(false), nil
 	case "nil":
-		return func(Context, ...Value) Value {
-			return nil
-		}, nil
+		return valFunc(nil), nil
 	}
 
 	return Noop, fmt.Errorf("%s:%d:%d failed to compile identifier: %s",
@@ -231,16 +242,12 @@ func compileNumber(node parser.Node) (Expr, error) {
 
 	i, err := strconv.ParseInt(node.Item.Value, 10, 64)
 	if err == nil {
-		return func(Context, ...Value) Value {
-			return i
-		}, nil
+		return valFunc(i), nil
 	}
 
 	f, err := strconv.ParseFloat(node.Item.Value, 64)
 	if err == nil {
-		return func(Context, ...Value) Value {
-			return f
-		}, nil
+		return valFunc(f), nil
 	}
 
 	return Noop, fmt.Errorf("%s:%d:%d failed to convert number: %s",
@@ -255,7 +262,5 @@ func compileString(node parser.Node) (Expr, error) {
 			node.Item.Name(), node.Item.Line, node.Item.Column, node.Item.Value, err)
 	}
 
-	return func(Context, ...Value) Value {
-		return s
-	}, nil
+	return valFunc(s), nil
 }

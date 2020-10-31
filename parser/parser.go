@@ -43,6 +43,10 @@ func (n Node) Type() lex.Type {
 	return n.Item.Type
 }
 
+func (n Node) Error(err error) error {
+	return n.Item.Error(err)
+}
+
 func (n Node) String() string {
 	s := strings.Builder{}
 
