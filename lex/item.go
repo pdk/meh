@@ -111,20 +111,20 @@ const (
 	Mult
 	Div
 	Modulo
-	Less
+	Equal
+	NotEqual
 	Greater
+	GreaterOrEqual
+	Less
+	LessOrEqual
 	Dot
 	Assign
 	Pipe
-	GreaterOrEqual
-	NotEqual
-	Equal
 	PlusAssign
 	MinusAssign
 	MultAssign
 	DivAssign
 	ModuloAssign
-	LessOrEqual
 	Or
 	And
 	// max number of Item Types

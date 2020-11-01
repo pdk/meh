@@ -76,15 +76,94 @@ var (
 	compilerForType [lex.TypeCount]CompilerFunc
 )
 
+type binaryOps struct {
+	intOp    func(int64, int64) Value
+	floatOp  func(float64, float64) Value
+	stringOp func(string, string) Value
+}
+
 func init() {
 	compilerForType = [lex.TypeCount]CompilerFunc{
 		lex.LeftBrace:         compileBlock,
 		lex.Ident:             compileIdent,
 		lex.Number:            compileNumber,
-		lex.Plus:              compilePlus,
 		lex.BacktickString:    compileString,
 		lex.DoubleQuoteString: compileString,
 		lex.SingleQuoteString: compileString,
+		lex.And:               compileAnd,
+		lex.Or:                compileOr,
+		lex.Plus: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:    func(i, j int64) Value { return i + j },
+				floatOp:  func(i, j float64) Value { return i + j },
+				stringOp: func(i, j string) Value { return i + j },
+			})
+		},
+		lex.Minus: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:   func(i, j int64) Value { return i - j },
+				floatOp: func(i, j float64) Value { return i - j },
+			})
+		},
+		lex.Mult: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:   func(i, j int64) Value { return i * j },
+				floatOp: func(i, j float64) Value { return i * j },
+			})
+		},
+		lex.Div: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:   func(i, j int64) Value { return i / j },
+				floatOp: func(i, j float64) Value { return i / j },
+			})
+		},
+		lex.Modulo: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp: func(i, j int64) Value { return i % j },
+			})
+		},
+		lex.Equal: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:    func(i, j int64) Value { return i == j },
+				floatOp:  func(i, j float64) Value { return i == j },
+				stringOp: func(i, j string) Value { return i == j },
+			})
+		},
+		lex.NotEqual: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:    func(i, j int64) Value { return i != j },
+				floatOp:  func(i, j float64) Value { return i != j },
+				stringOp: func(i, j string) Value { return i != j },
+			})
+		},
+		lex.Greater: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:    func(i, j int64) Value { return i > j },
+				floatOp:  func(i, j float64) Value { return i > j },
+				stringOp: func(i, j string) Value { return i > j },
+			})
+		},
+		lex.GreaterOrEqual: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:    func(i, j int64) Value { return i >= j },
+				floatOp:  func(i, j float64) Value { return i >= j },
+				stringOp: func(i, j string) Value { return i >= j },
+			})
+		},
+		lex.Less: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:    func(i, j int64) Value { return i < j },
+				floatOp:  func(i, j float64) Value { return i < j },
+				stringOp: func(i, j string) Value { return i < j },
+			})
+		},
+		lex.LessOrEqual: func(node parser.Node) (Expr, error) {
+			return compileBinaryOp(node, binaryOps{
+				intOp:    func(i, j int64) Value { return i <= j },
+				floatOp:  func(i, j float64) Value { return i <= j },
+				stringOp: func(i, j string) Value { return i <= j },
+			})
+		},
 	}
 }
 
@@ -99,7 +178,81 @@ func Compile(node parser.Node) (Expr, error) {
 	return c(node)
 }
 
-func compilePlus(node parser.Node) (Expr, error) {
+func compileAnd(node parser.Node) (Expr, error) {
+
+	left, err := Compile(node.Children[0])
+	if err != nil {
+		return nil, err
+	}
+	right, err := Compile(node.Children[1])
+	if err != nil {
+		return nil, err
+	}
+
+	return func(ctx Context, vals ...Value) (Value, error) {
+		lVal, err := left(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		if !isTruthy(lVal) {
+			return lVal, nil
+		}
+
+		rVal, err := right(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return rVal, nil
+	}, nil
+}
+
+func compileOr(node parser.Node) (Expr, error) {
+	left, err := Compile(node.Children[0])
+	if err != nil {
+		return nil, err
+	}
+	right, err := Compile(node.Children[1])
+	if err != nil {
+		return nil, err
+	}
+
+	return func(ctx Context, vals ...Value) (Value, error) {
+		lVal, err := left(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		if isTruthy(lVal) {
+			return lVal, nil
+		}
+
+		rVal, err := right(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return rVal, nil
+	}, nil
+}
+
+// isTruthy returns the boolean value of a boolean input. For a tuple, return
+// isTruthy of the first element in the tuple. Everything else is true.
+func isTruthy(v Value) bool {
+
+	if b, ok := v.(bool); ok {
+		return b
+	}
+
+	if t, ok := v.(Tuple); ok {
+		return isTruthy(t.Values[0])
+	}
+
+	return true
+}
+
+func compileBinaryOp(node parser.Node, ops binaryOps) (Expr, error) {
 
 	left, err := Compile(node.Children[0])
 	if err != nil {
@@ -120,14 +273,22 @@ func compilePlus(node parser.Node) (Expr, error) {
 			return nil, err
 		}
 
-		if v1, v2, ok := gotInts(lVal, rVal); ok {
-			return v1 + v2, nil
+		if ops.intOp != nil {
+			if v1, v2, ok := gotInts(lVal, rVal); ok {
+				return ops.intOp(v1, v2), nil
+			}
 		}
-		if v1, v2, ok := gotFloats(lVal, rVal); ok {
-			return v1 + v2, nil
+
+		if ops.floatOp != nil {
+			if v1, v2, ok := gotFloats(lVal, rVal); ok {
+				return ops.floatOp(v1, v2), nil
+			}
 		}
-		if v1, v2, ok := gotStrings(lVal, rVal); ok {
-			return v1 + v2, nil
+
+		if ops.stringOp != nil {
+			if v1, v2, ok := gotStrings(lVal, rVal); ok {
+				return ops.stringOp(v1, v2), nil
+			}
 		}
 
 		return nil, node.Error(fmt.Errorf("cannot apply operator to argument types %T, %T", lVal, rVal))

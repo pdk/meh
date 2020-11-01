@@ -157,6 +157,29 @@ func binaryOps(operators ...lex.Type) func(stmt []Node) []Node {
 	return f
 }
 
+func binaryOpsRightToLeft(operators ...lex.Type) func(stmt []Node) []Node {
+
+	var f func(stmt []Node) []Node
+	f = func(stmt []Node) []Node {
+
+		// [... x * y ...] => [... {* [x y]} ...]
+		for i := len(stmt) - 2; i >= 0; i-- {
+			if unresolvedType(stmt[i+1]).Match(operators...) {
+				operation := Node{
+					Resolved: true,
+					Item:     stmt[i+1].Item,
+					Children: []Node{stmt[i], stmt[i+2]},
+				}
+				return f(gorp(stmt[:i], operation, stmt[i+3:]))
+			}
+		}
+
+		return stmt
+	}
+
+	return f
+}
+
 func collapse(operators ...lex.Type) func(stmt []Node) []Node {
 
 	var f func(stmt []Node) []Node
