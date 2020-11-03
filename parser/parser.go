@@ -54,10 +54,10 @@ func (n Node) String() string {
 		s.WriteString("(")
 	}
 
-	// s.WriteString(n.Item.Type.String())
-	// s.WriteString("<")
+	s.WriteString(n.Item.Type.String())
+	s.WriteString("<")
 	s.WriteString(n.Item.Value)
-	// s.WriteString(">")
+	s.WriteString(">")
 
 	for _, c := range n.Children {
 		s.WriteString(" ")
@@ -97,6 +97,7 @@ func parseItems(wrapItem lex.Item, items chan Node) Node {
 		binaryOps(lex.Comma),
 		collapse(lex.Comma),
 		binaryOps(lex.Assign, lex.PlusAssign, lex.MinusAssign, lex.MultAssign, lex.DivAssign, lex.ModuloAssign),
+		reassign,
 		checkResolved,
 	) {
 
@@ -132,6 +133,61 @@ func checkResolved(stmt []Node) []Node {
 	}
 
 	return stmt
+}
+
+func reassign(stmt []Node) []Node {
+
+	// [+= x y] => [= x [+ x y]]
+	for i, n := range stmt {
+
+		newOp := assignOp(n.Type())
+		if newOp.Match(lex.Error) {
+			continue
+		}
+
+		opNode := Node{
+			Item:     n.Item,
+			Resolved: n.Resolved,
+			Children: []Node{
+				n.Children[0],
+				n.Children[1],
+			},
+		}
+		opNode.Item.Type = newOp
+
+		newNode := Node{
+			Item:     n.Item,
+			Resolved: n.Resolved,
+			Children: []Node{
+				n.Children[0],
+				opNode,
+			},
+		}
+		newNode.Item.Type = lex.Assign
+
+		log.Printf("new node: %s", newNode)
+
+		return append(append(stmt[:i], newNode), stmt[i+1:]...)
+	}
+
+	return stmt
+}
+
+func assignOp(op lex.Type) lex.Type {
+	switch op {
+	case lex.PlusAssign:
+		return lex.Plus
+	case lex.MinusAssign:
+		return lex.Minus
+	case lex.MultAssign:
+		return lex.Mult
+	case lex.DivAssign:
+		return lex.Div
+	case lex.ModuloAssign:
+		return lex.Modulo
+	}
+
+	return lex.Error
 }
 
 func binaryOps(operators ...lex.Type) func(stmt []Node) []Node {
