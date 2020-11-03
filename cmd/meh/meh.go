@@ -46,14 +46,11 @@ func runREPL() error {
 
 	fmt.Printf("meh 0.0.x\n")
 
-	// topContext := compile.GlobalScope()
+	ctx := compile.NewTopContext()
 
 	scanner := bufio.NewScanner(os.Stdin)
 
 	var input string
-
-	// var parenCount, bracketCount int
-
 	for {
 		if len(input) == 0 {
 			fmt.Printf("meh? ")
@@ -67,31 +64,28 @@ func runREPL() error {
 		}
 
 		nextLine := scanner.Text()
-		// fmt.Printf("you said %s\n", nextLine)
-
-		input += nextLine + "\n"
-
-		if !balanced(input) {
-			continue
+		if nextLine != "." {
+			input += nextLine + "\n"
 		}
 
-		_, items := lex.New("repl", strings.NewReader(input))
-		lastItem := <-items
-		for item := range items {
-			if !item.Match(lex.EOF) {
-				lastItem = item
+		if nextLine == "." || (balanced(input) && isComplete(input)) {
+			err := runProgram(ctx, "repl", strings.NewReader(input), true)
+			if err != nil {
+				log.Printf("%v", err)
 			}
+			input = ""
 		}
-		if !lastItem.Match(lex.Separator) {
-			continue
-		}
-
-		// cmd complete
-		runProgram("repl", strings.NewReader(input), true)
-
-		// reset for next command
-		input = ""
 	}
+}
+
+func isComplete(input string) bool {
+	_, items := lex.New("repl", strings.NewReader(input))
+	lastItem := <-items
+	for item := range items {
+		lastItem = item
+	}
+
+	return lastItem.Match(lex.Separator, lex.EOF)
 }
 
 // balanced checks if the string has balanced {} and (). Does not correctly
@@ -119,10 +113,13 @@ func count(s string, r rune) int {
 }
 
 func runFile(name string, input io.Reader) error {
-	return runProgram(name, input, false)
+
+	ctx := compile.NewTopContext()
+
+	return runProgram(ctx, name, input, false)
 }
 
-func runProgram(name string, input io.Reader, printResult bool) error {
+func runProgram(ctx *compile.Context, name string, input io.Reader, printResult bool) error {
 
 	p := parser.NewFromReader(name, input)
 
@@ -134,11 +131,7 @@ func runProgram(name string, input io.Reader, printResult bool) error {
 		return err
 	}
 
-	// log.Printf("program: %#v", program)
-
-	c := compile.Context{}
-
-	result, err := program(c)
+	result, err := program(ctx)
 	if err != nil {
 		return err
 	}

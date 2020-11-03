@@ -10,12 +10,6 @@ import (
 
 // Convert a parse tree to an executable function
 
-// Value is a value.
-type Value interface{}
-
-// Context is the current name->value map.
-type Context map[string]Value
-
 // FlowChangeType indicates the type of flow control change.
 type FlowChangeType byte
 
@@ -61,10 +55,10 @@ func NewContinue() Value {
 }
 
 // Expr is a thing that can be evaluated.
-type Expr func(Context, ...Value) (Value, error)
+type Expr func(*Context, ...Value) (Value, error)
 
 // Noop is a no-operation Expr.
-func Noop(c Context, args ...Value) (Value, error) {
+func Noop(ctx *Context, args ...Value) (Value, error) {
 	return nil, nil
 }
 
@@ -86,6 +80,7 @@ func init() {
 	compilerForType = [lex.TypeCount]CompilerFunc{
 		lex.LeftBrace:         compileBlock,
 		lex.Ident:             compileIdent,
+		lex.Assign:            compileAssign,
 		lex.Number:            compileNumber,
 		lex.BacktickString:    compileString,
 		lex.DoubleQuoteString: compileString,
@@ -178,6 +173,35 @@ func Compile(node parser.Node) (Expr, error) {
 	return c(node)
 }
 
+func compileAssign(node parser.Node) (Expr, error) {
+
+	if len(node.Children) != 2 {
+		return nil, node.Error(fmt.Errorf("assignment requires exactly 2 children"))
+	}
+
+	lhs := node.Children[0]
+	if !lhs.Type().Match(lex.Ident) {
+		return nil, node.Error(fmt.Errorf("assignment requires an identifier"))
+	}
+	left := lhs.Item.Value
+
+	right, err := Compile(node.Children[1])
+	if err != nil {
+		return nil, err
+	}
+
+	return func(ctx *Context, vals ...Value) (Value, error) {
+
+		val, err := right(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return ctx.Set(left, val)
+
+	}, nil
+}
+
 func compileAnd(node parser.Node) (Expr, error) {
 
 	left, err := Compile(node.Children[0])
@@ -189,7 +213,7 @@ func compileAnd(node parser.Node) (Expr, error) {
 		return nil, err
 	}
 
-	return func(ctx Context, vals ...Value) (Value, error) {
+	return func(ctx *Context, vals ...Value) (Value, error) {
 		lVal, err := left(ctx)
 		if err != nil {
 			return nil, err
@@ -218,7 +242,7 @@ func compileOr(node parser.Node) (Expr, error) {
 		return nil, err
 	}
 
-	return func(ctx Context, vals ...Value) (Value, error) {
+	return func(ctx *Context, vals ...Value) (Value, error) {
 		lVal, err := left(ctx)
 		if err != nil {
 			return nil, err
@@ -263,7 +287,7 @@ func compileBinaryOp(node parser.Node, ops binaryOps) (Expr, error) {
 		return nil, err
 	}
 
-	return func(ctx Context, vals ...Value) (Value, error) {
+	return func(ctx *Context, vals ...Value) (Value, error) {
 		lVal, err := left(ctx)
 		if err != nil {
 			return nil, err
@@ -359,7 +383,7 @@ func compileBlock(node parser.Node) (Expr, error) {
 		stmts = append(stmts, e)
 	}
 
-	return func(ctx Context, vals ...Value) (Value, error) {
+	return func(ctx *Context, vals ...Value) (Value, error) {
 
 		var lastVal interface{}
 		var err error
@@ -378,8 +402,8 @@ func compileBlock(node parser.Node) (Expr, error) {
 	}, nil
 }
 
-func valFunc(val Value) func(Context, ...Value) (Value, error) {
-	return func(Context, ...Value) (Value, error) {
+func valFunc(val Value) func(*Context, ...Value) (Value, error) {
+	return func(*Context, ...Value) (Value, error) {
 		return val, nil
 	}
 }
@@ -395,8 +419,9 @@ func compileIdent(node parser.Node) (Expr, error) {
 		return valFunc(nil), nil
 	}
 
-	return Noop, fmt.Errorf("%s:%d:%d failed to compile identifier: %s",
-		node.Item.Name(), node.Item.Line, node.Item.Column, node.Item.Value)
+	return func(ctx *Context, args ...Value) (Value, error) {
+		return ctx.Get(node.Item.Value), nil
+	}, nil
 }
 
 func compileNumber(node parser.Node) (Expr, error) {

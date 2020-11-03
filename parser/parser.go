@@ -96,7 +96,7 @@ func parseItems(wrapItem lex.Item, items chan Node) Node {
 		binaryOps(lex.And, lex.Or),
 		binaryOps(lex.Comma),
 		collapse(lex.Comma),
-		binaryOps(lex.Assign, lex.PlusAssign, lex.MinusAssign, lex.MultAssign, lex.DivAssign, lex.ModuloAssign),
+		binaryOpsRightToLeft(lex.Assign, lex.PlusAssign, lex.MinusAssign, lex.MultAssign, lex.DivAssign, lex.ModuloAssign),
 		reassign,
 		checkResolved,
 	) {
@@ -164,8 +164,6 @@ func reassign(stmt []Node) []Node {
 			},
 		}
 		newNode.Item.Type = lex.Assign
-
-		log.Printf("new node: %s", newNode)
 
 		return append(append(stmt[:i], newNode), stmt[i+1:]...)
 	}
