@@ -260,7 +260,24 @@ func word(l *Lexer) stateFunc {
 
 		l.backup(r, nil)
 
-		l.emit(Ident)
+		switch l.current.String() {
+		case "nil":
+			l.emit(Nil)
+		case "fn":
+			l.emit(Function)
+		case "true":
+			l.emit(True)
+		case "false":
+			l.emit(False)
+		case "return":
+			l.emit(Return)
+		case "continue":
+			l.emit(Continue)
+		case "break":
+			l.emit(Break)
+		default:
+			l.emit(Ident)
+		}
 
 		return cleanSlate
 	}

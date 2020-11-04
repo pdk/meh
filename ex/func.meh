@@ -1,0 +1,7 @@
+#!/bin/env meh
+
+a = fn (i, j) {
+    return i + j
+}
+
+a(1+1,78)

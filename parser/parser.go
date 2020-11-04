@@ -51,13 +51,13 @@ func (n Node) String() string {
 	s := strings.Builder{}
 
 	if len(n.Children) > 0 {
-		s.WriteString("(")
+		s.WriteString("<")
 	}
 
-	s.WriteString(n.Item.Type.String())
-	s.WriteString("<")
+	// s.WriteString(n.Item.Type.String())
+	// s.WriteString("~")
 	s.WriteString(n.Item.Value)
-	s.WriteString(">")
+	// s.WriteString("~")
 
 	for _, c := range n.Children {
 		s.WriteString(" ")
@@ -65,7 +65,7 @@ func (n Node) String() string {
 	}
 
 	if len(n.Children) > 0 {
-		s.WriteString(")")
+		s.WriteString(">")
 	}
 
 	return s.String()
@@ -90,12 +90,23 @@ func parseItems(wrapItem lex.Item, items chan Node) Node {
 
 	for x := range pipeline(
 		slicify(bracify(parenthify(items))),
+		// logify("slicify"),
+		raiseParenComma,
+		// logify("raiseParenComma"),
+		funcify,
+		// logify("funcify"),
+		funcApply,
+		// logify("funcapply"),
 		binaryOps(lex.Mult, lex.Div, lex.Modulo),
 		binaryOps(lex.Plus, lex.Minus),
 		binaryOps(lex.Less, lex.Greater, lex.LessOrEqual, lex.GreaterOrEqual, lex.Equal, lex.NotEqual),
-		binaryOps(lex.And, lex.Or),
+		// logify("binops"),
 		binaryOps(lex.Comma),
+		// logify("comma"),
 		collapse(lex.Comma),
+		// logify("collapse"),
+		returnify,
+		binaryOps(lex.And, lex.Or),
 		binaryOpsRightToLeft(lex.Assign, lex.PlusAssign, lex.MinusAssign, lex.MultAssign, lex.DivAssign, lex.ModuloAssign),
 		reassign,
 		checkResolved,
@@ -121,6 +132,13 @@ func parseItems(wrapItem lex.Item, items chan Node) Node {
 	}
 }
 
+// func logify(label string) func(stmt []Node) []Node {
+// 	return func(stmt []Node) []Node {
+// 		log.Printf("%s: %v", label, stmt)
+// 		return stmt
+// 	}
+// }
+
 func checkResolved(stmt []Node) []Node {
 
 	for _, node := range stmt {
@@ -135,10 +153,85 @@ func checkResolved(stmt []Node) []Node {
 	return stmt
 }
 
+func funcApply(stmt []Node) []Node {
+
+	for i := 0; i < len(stmt)-1; i++ {
+		if !stmt[i].Resolved || !stmt[i+1].Item.Match(lex.LeftParen) {
+			continue
+		}
+
+		fn := stmt[i]
+		params := stmt[i+1]
+
+		newItem := fn.Item
+		newItem.Type = lex.FuncApply
+
+		node := Node{
+			Item:     newItem,
+			Resolved: true,
+			Children: []Node{fn, params},
+		}
+
+		return funcApply(gorp(stmt[:i], node, stmt[i+2:]))
+	}
+
+	return stmt
+}
+
+func funcify(stmt []Node) []Node {
+
+	for i := 0; i < len(stmt)-2; i++ {
+
+		if stmt[i].Resolved ||
+			!stmt[i].Type().Match(lex.Function) ||
+			!stmt[i+1].Type().Match(lex.LeftParen) ||
+			!stmt[i+2].Type().Match(lex.LeftBrace) {
+			continue
+		}
+
+		n := stmt[i]
+		n.Resolved = true
+		n.Children = []Node{
+			stmt[i+1], stmt[i+2],
+		}
+
+		return funcify(gorp(stmt[:i], n, stmt[i+3:]))
+	}
+
+	return stmt
+}
+
+func returnify(stmt []Node) []Node {
+
+	for i, n := range stmt {
+		if n.Resolved || !n.Type().Match(lex.Return) {
+			continue
+		}
+
+		n.Resolved = true
+
+		if i+1 < len(stmt) && stmt[i+1].Resolved {
+			n.Children = []Node{
+				stmt[i+1],
+			}
+
+			return returnify(gorp(stmt[:i], n, stmt[i+2:]))
+		}
+
+		return returnify(gorp(stmt[:i], n, stmt[i+1:]))
+	}
+
+	return stmt
+}
+
 func reassign(stmt []Node) []Node {
 
 	// [+= x y] => [= x [+ x y]]
 	for i, n := range stmt {
+
+		if n.Resolved {
+			continue
+		}
 
 		newOp := assignOp(n.Type())
 		if newOp.Match(lex.Error) {
@@ -165,7 +258,7 @@ func reassign(stmt []Node) []Node {
 		}
 		newNode.Item.Type = lex.Assign
 
-		return append(append(stmt[:i], newNode), stmt[i+1:]...)
+		return reassign(gorp(stmt[:i], newNode, stmt[i+1:]))
 	}
 
 	return stmt
@@ -232,6 +325,24 @@ func binaryOpsRightToLeft(operators ...lex.Type) func(stmt []Node) []Node {
 	}
 
 	return f
+}
+
+func raiseParenComma(stmt []Node) []Node {
+
+	for i, n := range stmt {
+
+		if !stmt[i].Type().Match(lex.LeftParen) ||
+			len(stmt[i].Children) != 1 ||
+			!stmt[i].Children[0].Type().Match(lex.Comma) {
+			continue
+		}
+
+		n.Children = n.Children[0].Children
+
+		return raiseParenComma(gorp(stmt[:i], n, stmt[i+1:]))
+	}
+
+	return stmt
 }
 
 func collapse(operators ...lex.Type) func(stmt []Node) []Node {
@@ -430,6 +541,8 @@ func nodify(in chan lex.Item) chan Node {
 				Item: item,
 				Resolved: item.Type.Match(
 					lex.Ident, lex.Number,
+					lex.Break, lex.Continue,
+					lex.Nil, lex.True, lex.False,
 					lex.DoubleQuoteString, lex.SingleQuoteString, lex.BacktickString),
 			}
 		}

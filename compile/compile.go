@@ -10,50 +10,6 @@ import (
 
 // Convert a parse tree to an executable function
 
-// FlowChangeType indicates the type of flow control change.
-type FlowChangeType byte
-
-// Which kinds of flow control changes that are handled.
-const (
-	None FlowChangeType = iota
-	Return
-	Break
-	Continue
-)
-
-// FlowChange is what is returned by an Expr when there is a change of flow.
-type FlowChange struct {
-	Type FlowChangeType
-	Value
-}
-
-// flowChange checks if the value is a FlowChange.
-func flowChange(v Value) FlowChangeType {
-	change, ok := v.(FlowChange)
-	if !ok {
-		return None
-	}
-	return change.Type
-}
-
-// NewReturn produces a Return FlowChange.
-func NewReturn(values ...Value) Value {
-	return FlowChange{
-		Type:  Return,
-		Value: values,
-	}
-}
-
-// NewBreak produces a Break FlowChange.
-func NewBreak() Value {
-	return FlowChange{Type: Break}
-}
-
-// NewContinue produces a Continue FlowChange.
-func NewContinue() Value {
-	return FlowChange{Type: Continue}
-}
-
 // Expr is a thing that can be evaluated.
 type Expr func(*Context, ...Value) (Value, error)
 
@@ -80,6 +36,14 @@ func init() {
 	compilerForType = [lex.TypeCount]CompilerFunc{
 		lex.LeftBrace:         compileBlock,
 		lex.Ident:             compileIdent,
+		lex.Nil:               fixedValue(nil),
+		lex.True:              fixedValue(true),
+		lex.False:             fixedValue(false),
+		lex.Continue:          fixedValue(NewContinue()),
+		lex.Break:             fixedValue(NewBreak()),
+		lex.Return:            compileReturn,
+		lex.Function:          compileFunction,
+		lex.FuncApply:         compileFuncApply,
 		lex.Assign:            compileAssign,
 		lex.Number:            compileNumber,
 		lex.BacktickString:    compileString,
@@ -171,6 +135,130 @@ func Compile(node parser.Node) (Expr, error) {
 	}
 
 	return c(node)
+}
+
+func compileReturn(node parser.Node) (Expr, error) {
+
+	if len(node.Children) == 0 {
+		return valFunc(NewReturn()), nil
+	}
+
+	expr, err := Compile(node.Children[0])
+	if err != nil {
+		return nil, err
+	}
+
+	return func(ctx *Context, vals ...Value) (Value, error) {
+
+		val, err := expr(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewReturn(val), nil
+	}, nil
+}
+
+func compileFuncApply(node parser.Node) (Expr, error) {
+
+	fn, err := Compile(node.Children[0])
+	if err != nil {
+		return nil, err
+	}
+
+	args := []Expr{}
+	for _, e := range node.Children[1].Children {
+		next, err := Compile(e)
+		if err != nil {
+			return nil, err
+		}
+
+		args = append(args, next)
+	}
+
+	return func(ctx *Context, vals ...Value) (Value, error) {
+
+		fnVal, err := fn(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		expr, ok := fnVal.(func(*Context, ...Value) (Value, error))
+		if !ok {
+			return nil, fmt.Errorf("cannot invoke non-function: %T %v", fnVal, fnVal)
+		}
+
+		argValues := []Value{}
+		for _, a := range args {
+			nextVal, err := a(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			argValues = append(argValues, nextVal)
+		}
+
+		return expr(ctx, argValues...)
+	}, nil
+}
+
+func compileFunction(node parser.Node) (Expr, error) {
+
+	if len(node.Children) != 2 {
+		return nil, node.Error(fmt.Errorf("malformed function: requires param list & body"))
+	}
+
+	params, err := parameterNames(node.Children[0])
+	if err != nil {
+		return nil, err
+	}
+
+	body := node.Children[1]
+	if !body.Type().Match(lex.LeftBrace) {
+		return nil, node.Error(fmt.Errorf("malformed function: requires block"))
+	}
+
+	block, err := Compile(body)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(ctx *Context, vals ...Value) (Value, error) {
+		return func(ctx *Context, vals ...Value) (Value, error) {
+
+			if len(vals) != len(params) {
+				return nil, fmt.Errorf("failed to apply function: received %d arguments for %d parameters", len(vals), len(params))
+			}
+
+			funcCtx := NewContext(ctx)
+			for i, p := range params {
+				_, err := funcCtx.Set(p, vals[i])
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			return block(funcCtx)
+		}, nil
+	}, nil
+}
+
+func parameterNames(node parser.Node) ([]string, error) {
+
+	if !node.Type().Match(lex.LeftParen) {
+		return nil, node.Error(fmt.Errorf("malformed function, parameter list required"))
+	}
+
+	names := []string{}
+	for _, next := range node.Children {
+		if !next.Type().Match(lex.Ident) {
+			return nil, node.Error(fmt.Errorf("malformed function, parameters must be identifiers, found %v", next))
+		}
+
+		names = append(names, next.Item.Value)
+	}
+
+	return names, nil
 }
 
 func compileAssign(node parser.Node) (Expr, error) {
@@ -408,17 +496,13 @@ func valFunc(val Value) func(*Context, ...Value) (Value, error) {
 	}
 }
 
-func compileIdent(node parser.Node) (Expr, error) {
-
-	switch node.Item.Value {
-	case "true":
-		return valFunc(true), nil
-	case "false":
-		return valFunc(false), nil
-	case "nil":
-		return valFunc(nil), nil
+func fixedValue(val Value) func(node parser.Node) (Expr, error) {
+	return func(node parser.Node) (Expr, error) {
+		return valFunc(val), nil
 	}
+}
 
+func compileIdent(node parser.Node) (Expr, error) {
 	return func(ctx *Context, args ...Value) (Value, error) {
 		return ctx.Get(node.Item.Value), nil
 	}, nil

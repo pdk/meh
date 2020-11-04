@@ -84,6 +84,15 @@ const (
 	EOF Type = iota
 	Nada
 	Error
+	// reserved words
+	Nil
+	True
+	False
+	Return
+	Continue
+	Break
+	Function
+	FuncApply
 	// expr separator
 	Separator
 	// identifiers
@@ -142,6 +151,22 @@ func (t Type) String() string {
 		return "Error"
 	case Ident:
 		return "Ident"
+	case Nil:
+		return "Nil"
+	case True:
+		return "True"
+	case False:
+		return "False"
+	case Continue:
+		return "Continue"
+	case Break:
+		return "Break"
+	case Function:
+		return "Function"
+	case FuncApply:
+		return "FuncApply"
+	case Return:
+		return "Return"
 	case Separator:
 		return "Separator"
 	case Number:
