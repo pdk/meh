@@ -28,9 +28,23 @@ func flowChange(v Value) FlowChangeType {
 
 // NewReturn produces a Return FlowChange.
 func NewReturn(values ...Value) Value {
-	return FlowChange{
-		Type:  Return,
-		Value: values,
+
+	switch len(values) {
+	case 0:
+		return FlowChange{
+			Type:  Return,
+			Value: nil,
+		}
+	case 1:
+		return FlowChange{
+			Type:  Return,
+			Value: values[0],
+		}
+	default:
+		return FlowChange{
+			Type:  Return,
+			Value: values,
+		}
 	}
 }
 

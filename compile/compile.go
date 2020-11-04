@@ -198,7 +198,20 @@ func compileFuncApply(node parser.Node) (Expr, error) {
 			argValues = append(argValues, nextVal)
 		}
 
-		return expr(ctx, argValues...)
+		res, err := expr(ctx, argValues...)
+		if err != nil {
+			return nil, err
+		}
+
+		if retVal, ok := res.(FlowChange); ok {
+			if retVal.Type == Return {
+				return retVal.Value, nil
+			}
+
+			return nil, fmt.Errorf("FuncApply received non-return flow control change: %v", res)
+		}
+
+		return res, err
 	}, nil
 }
 
