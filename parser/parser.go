@@ -54,10 +54,9 @@ func (n Node) String() string {
 		s.WriteString("<")
 	}
 
-	// s.WriteString(n.Item.Type.String())
-	// s.WriteString("~")
+	s.WriteString(n.Item.Type.String())
+	s.WriteString("~")
 	s.WriteString(n.Item.Value)
-	// s.WriteString("~")
 
 	for _, c := range n.Children {
 		s.WriteString(" ")
@@ -435,19 +434,17 @@ func slicify(in chan Node) chan []Node {
 func bracify(in chan Node) chan Node {
 
 	out := make(chan Node)
-
 	go func() {
 		defer close(out)
 
 		for n := range in {
 
-			if !n.Item.Type.Match(lex.LeftBrace) {
+			if !n.Item.Type.Match(lex.LeftBrace) || n.Resolved {
 				out <- n
 				continue
 			}
 
 			sub := make(chan Node)
-
 			go func(openBrace Node) {
 				defer close(sub)
 
@@ -479,19 +476,17 @@ func bracify(in chan Node) chan Node {
 func parenthify(in chan Node) chan Node {
 
 	out := make(chan Node)
-
 	go func() {
 		defer close(out)
 
 		for n := range in {
 
-			if !n.Item.Type.Match(lex.LeftParen) {
+			if !n.Item.Type.Match(lex.LeftParen) || n.Resolved {
 				out <- n
 				continue
 			}
 
 			sub := make(chan Node)
-
 			go func(openParen Node) {
 				defer close(sub)
 
